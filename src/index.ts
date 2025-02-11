@@ -3,10 +3,15 @@ import { Octokit } from "@octokit/rest";
 
 const orgName = "GITHUB_ORG_NAME";
 const maxRequestsPerMinute = 30; // Set your desired limit here
+const token = process.argv[2];
+if (!token) {
+  console.error('Error: Please provide a GitLab personal access token as an argument.');
+  process.exit(1);
+}
 
 // Instantiate Octokit with your GitHub personal access token
 const octokit = new Octokit({
-  auth: "YOUR-TOKEN"
+  auth: token
 });
 
 // Function to fetch all repositories for a given organization with throttling
