@@ -1,0 +1,18 @@
+{
+  "name": "find-repo-info",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Julian Totzek-Hallhuber",
+  "license": "ISC",
+  "dependencies": {
+    "@octokit/core": "^5.1.0",
+    "@octokit/rest": "^20.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24"
+  }
+}
