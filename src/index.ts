@@ -294,6 +294,21 @@ async function wait(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Function to delete cached commit files
+async function deleteCachedCommitFiles(): Promise<void> {
+  try {
+    const files = await fs.readdir('repos');
+    for (const file of files) {
+      if (file.endsWith('-contributors.csv')) {
+        await fs.unlink(`repos/${file}`);
+        console.log(`Deleted cached file: repos/${file}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error deleting cached files:', error);
+  }
+}
+
 async function getAllUsers() {
   console.log('Starting contributor analysis...');
   console.log(`Organization: ${orgName}`);
@@ -319,6 +334,19 @@ async function getAllUsers() {
           return { name, selected: selected === 'true' };
         });
     } else {
+      // Delete cached files if force-reload is specified
+      if (forceReload) {
+        console.log('Force reload specified, deleting cached files...');
+        await deleteCachedCommitFiles();
+        try {
+          await fs.access('repositories.txt');
+          await fs.unlink('repositories.txt');
+          console.log('Deleted repositories.txt');
+        } catch (error) {
+          // File doesn't exist, which is fine
+        }
+      }
+
       console.log('Fetching repositories from GitHub...');
       const repoNames = await getAllRepositoriesWithThrottle(orgName, maxRequestsPerMinute);
       repositories = repoNames.map(name => ({ name, selected: true })); // Default to all repositories selected

@@ -4435,6 +4435,23 @@ function wait(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     });
 }
+// Function to delete cached commit files
+function deleteCachedCommitFiles() {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            const files = yield fs_1.promises.readdir('repos');
+            for (const file of files) {
+                if (file.endsWith('-contributors.csv')) {
+                    yield fs_1.promises.unlink(`repos/${file}`);
+                    console.log(`Deleted cached file: repos/${file}`);
+                }
+            }
+        }
+        catch (error) {
+            console.error('Error deleting cached files:', error);
+        }
+    });
+}
 function getAllUsers() {
     return __awaiter(this, void 0, void 0, function* () {
         console.log('Starting contributor analysis...');
@@ -4459,6 +4476,19 @@ function getAllUsers() {
                 });
             }
             else {
+                // Delete cached files if force-reload is specified
+                if (forceReload) {
+                    console.log('Force reload specified, deleting cached files...');
+                    yield deleteCachedCommitFiles();
+                    try {
+                        yield fs_1.promises.access('repositories.txt');
+                        yield fs_1.promises.unlink('repositories.txt');
+                        console.log('Deleted repositories.txt');
+                    }
+                    catch (error) {
+                        // File doesn't exist, which is fine
+                    }
+                }
                 console.log('Fetching repositories from GitHub...');
                 const repoNames = yield getAllRepositoriesWithThrottle(orgName, maxRequestsPerMinute);
                 repositories = repoNames.map(name => ({ name, selected: true })); // Default to all repositories selected
