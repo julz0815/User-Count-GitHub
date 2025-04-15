@@ -1,85 +1,112 @@
-# GitHub Contributor Counter
+# GitHub User Count
 
-A Node.js tool to analyze and count unique contributors across GitHub repositories within an organization, with the ability to categorize contributors based on email domains.
+This script analyzes GitHub repositories to count unique contributors and categorize them based on their email domains.
 
 ## Features
 
-- Fetches all repositories from a GitHub organization
+- Fetches all repositories accessible to the provided GitHub token
 - Analyzes commits from the last 90 days
-- Counts unique contributors across all repositories
-- Categorizes contributors based on email domain patterns (e.g., Gmail vs. corporate emails)
-- Supports interactive repository selection
-- Caches repository and contributor data for faster subsequent runs
-- Case-insensitive email handling
+- Categorizes contributors based on email domains
+- Supports custom regex patterns for email categorization
+- Interactive repository selection mode
+- Caches repository and commit data for faster subsequent runs
+- Generates detailed reports of contributors per repository
 
 ## Prerequisites
 
-- Node.js (v14 or higher)
-- npm or yarn
-- GitHub Personal Access Token with appropriate permissions
+- Node.js
+- A GitHub personal access token with appropriate permissions
 
 ## Installation
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd github-contributor-counter
-```
-
+1. Clone the repository
 2. Install dependencies:
 ```bash
 npm install
-```
-
-3. Create a `.env` file in the root directory and add your GitHub token:
-```
-GITHUB_TOKEN=your_github_token_here
-```
-
-4. Build the project:
-```bash
-ncc build src/index.ts
 ```
 
 ## Usage
 
 Basic usage:
 ```bash
-node dist/index.js <token> <organization>
+node dist/index.js <token>
 ```
 
-### Options
-
-- `--force-reload`: Force reload of repositories
-- `--interactive`: Enable interactive repository selection
-- `--regex <pattern>`: Use custom regex pattern for email categorization
-- `--regex-file <file>`: Read regex pattern from file
-
-### Examples
-
-1. Basic usage:
+With custom domain:
 ```bash
-node dist/index.js your-token julian-veracode
+node dist/index.js <token> https://your-github-domain.com
 ```
 
-2. With interactive repository selection:
+With force reload:
 ```bash
-node dist/index.js your-token julian-veracode --interactive
+node dist/index.js <token> --force-reload
 ```
 
-3. With custom regex pattern:
+With interactive mode:
 ```bash
-node dist/index.js your-token julian-veracode --regex "/gmail\.com$/i"
+node dist/index.js <token> --interactive
+```
+
+With custom regex pattern:
+```bash
+node dist/index.js <token> --regex "gmail\.com$"
+```
+
+With regex pattern from file:
+```bash
+node dist/index.js <token> --regex-file patterns.txt
 ```
 
 ## Output Files
 
-The tool generates several output files:
+The script generates several output files:
 
-1. `repositories.txt`: List of all repositories in the organization
-2. `repos/*-contributors.csv`: Individual contributor data for each repository
-3. `unique-contributors.txt`: List of unique contributors (excluding those matching the regex pattern)
-4. `unique-contributors-others.txt`: List of unique contributors matching the regex pattern
+1. `repositories.txt`: List of all repositories with their selection status
+2. `repos/*-contributors.csv`: Individual CSV files for each repository containing commit data
+3. `unique-contributors.txt`: List of unique contributors with non-matching email domains
+4. `unique-contributors-others.txt`: List of unique contributors with matching email domains
+5. `committers-per-repo.txt`: Detailed breakdown of committers for each repository
+
+### committers-per-repo.txt Format
+
+The `committers-per-repo.txt` file contains a hierarchical list of repositories and their committers:
+
+```
+repository-name
+  committer1@example.com
+  committer2@example.com
+
+another-repository
+  committer3@example.com
+  committer1@example.com
+```
+
+Each repository is listed with its full name (including organization if available), followed by an indented list of all unique committers for that repository.
+
+## Repository Selection
+
+The script provides two ways to select repositories:
+
+1. **Interactive Mode**: Use `--interactive` to be prompted for each repository
+2. **Manual Selection**: 
+   - Run the script once to generate `repositories.txt`
+   - Edit the file to set `true` or `false` for each repository
+   - Run the script again to process only selected repositories
+
+## Email Categorization
+
+The script categorizes contributors based on their email domains using a regex pattern. By default, it uses `/github\.com$/i` to identify GitHub-associated emails.
+
+You can customize this using:
+- `--regex` to specify a pattern directly
+- `--regex-file` to read patterns from a file
+
+## Notes
+
+- The script caches repository and commit data to avoid unnecessary API calls
+- Use `--force-reload` to refresh all data
+- The script respects GitHub's rate limits and includes retry logic
+- All timestamps are in UTC
 
 ## Example Output
 
