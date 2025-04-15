@@ -4174,50 +4174,45 @@ const readline = __importStar(__nccwpck_require__(521));
 // Parse command line arguments
 const args = process.argv.slice(2);
 const token = args[0];
-const orgName = args[1];
-// Default values
-let domain = 'https://api.github.com';
+let domain = 'https://api.github.com'; // Default to api.github.com
 let forceReload = false;
 let interactive = false;
-let regexPattern = '/[\\w.-]+github\\.com/i';
-let regexFile = null;
+let regexPattern = '/github\\.com$/i';
+let regexFile;
 const maxRequestsPerMinute = 30;
-// Parse arguments
-for (let i = 2; i < args.length; i++) {
-    const arg = args[i];
-    if (arg.startsWith('--')) {
-        // Handle flags
-        switch (arg) {
-            case '--force-reload':
-                forceReload = true;
-                break;
-            case '--interactive':
-                interactive = true;
-                break;
-            case '--regex':
-                if (i + 1 < args.length) {
-                    regexPattern = args[++i];
-                }
-                break;
-            case '--regex-file':
-                if (i + 1 < args.length) {
-                    regexFile = args[++i];
-                }
-                break;
-        }
+// Parse additional arguments
+for (let i = 1; i < args.length; i++) {
+    if (args[i] === '--force-reload') {
+        forceReload = true;
     }
-    else if (i === 2) {
-        // First non-flag argument after orgName is the domain
-        domain = arg;
+    else if (args[i] === '--interactive') {
+        interactive = true;
+    }
+    else if (args[i] === '--regex' && i + 1 < args.length) {
+        regexPattern = args[++i];
+    }
+    else if (args[i] === '--regex-file' && i + 1 < args.length) {
+        regexFile = args[++i];
+    }
+    else if (!args[i].startsWith('--')) {
+        // If it's not a flag, it's the domain
+        domain = args[i];
     }
 }
-if (!token || !orgName) {
-    console.error('Error: Please provide both a GitHub personal access token and organization name as arguments.');
-    console.error('Usage: ts-node src/index.ts <token> <organization> [domain] [options]');
+// Validate domain
+if (!domain.startsWith('https://')) {
+    console.error('Error: Domain must start with https://');
+    process.exit(1);
+}
+// Ensure we're using the API endpoint
+const apiDomain = domain.includes('api.github.com') ? domain : 'https://api.github.com';
+if (!token) {
+    console.error('Error: Please provide a GitHub personal access token.');
+    console.error('Usage: ts-node src/index.ts <token> [domain] [options]');
     console.error('Options:');
     console.error('  --force-reload    Force reload of repositories');
-    console.error('  --interactive     Enable interactive repository selection');
-    console.error('  --regex <pattern> Use custom regex pattern (default: /[\\w.-]+github\\.com/i)');
+    console.error('  --interactive    Enable interactive repository selection');
+    console.error('  --regex <pattern> Use custom regex pattern for email categorization');
     console.error('  --regex-file <file> Read regex pattern from file');
     process.exit(1);
 }
@@ -4260,14 +4255,16 @@ function getRegexPattern() {
 // Instantiate Octokit with your GitHub personal access token
 const octokit = new rest_1.Octokit({
     auth: token,
-    baseUrl: domain,
+    baseUrl: apiDomain,
     userAgent: 'github-contributor-counter',
     request: {
-        timeout: 10000
+        timeout: 30000, // Increase timeout to 30 seconds
+        retries: 3, // Add retries for failed requests
+        retryAfter: 5 // Wait 5 seconds between retries
     }
 });
-// Function to fetch all repositories for a given organization with throttling
-function getAllRepositoriesWithThrottle(org, maxRequestsPerMinute) {
+// Function to fetch all repositories with throttling
+function getAllRepositoriesWithThrottle(maxRequestsPerMinute) {
     return __awaiter(this, void 0, void 0, function* () {
         const repositories = [];
         const perPage = 100;
@@ -4275,41 +4272,15 @@ function getAllRepositoriesWithThrottle(org, maxRequestsPerMinute) {
         const maxRequestsPerSecond = maxRequestsPerMinute / 60;
         let remainingRequests = maxRequestsPerMinute;
         let totalRepos = 0;
+        let retryCount = 0;
+        const maxRetries = 3;
         try {
-            // First, verify the organization exists and we have access
-            console.log(`Verifying access to organization ${org}...`);
-            try {
-                const response = yield octokit.rest.orgs.get({
-                    org
-                });
-                console.log('Organization access verified successfully');
-                console.log(`Organization details: ${JSON.stringify(response.data, null, 2)}`);
-            }
-            catch (error) {
-                console.error('Full error details:', error);
-                if (error instanceof Error) {
-                    if (error.message.includes('Not Found')) {
-                        console.error(`Error: Organization "${org}" not found. Please verify the organization name is correct.`);
-                    }
-                    else if (error.message.includes('Bad credentials')) {
-                        console.error('Error: Invalid GitHub token. Please verify your token is correct and has the necessary permissions.');
-                    }
-                    else {
-                        console.error(`Error verifying organization: ${error.message}`);
-                        console.error('Error stack:', error.stack);
-                    }
-                }
-                else {
-                    console.error('Unknown error type:', error);
-                }
-                throw error;
-            }
             while (true) {
                 const startTime = Date.now();
                 try {
                     console.log(`Fetching repositories page ${page}...`);
-                    const response = yield octokit.rest.repos.listForOrg({
-                        org,
+                    console.log(`Using API endpoint: ${apiDomain}`);
+                    const response = yield octokit.rest.repos.listForAuthenticatedUser({
                         per_page: perPage,
                         page,
                         type: 'all'
@@ -4318,10 +4289,18 @@ function getAllRepositoriesWithThrottle(org, maxRequestsPerMinute) {
                         console.log('No more repositories found');
                         break;
                     }
-                    const newRepos = response.data.map((repo) => repo.name);
+                    const newRepos = response.data.map((repo) => {
+                        var _a;
+                        return ({
+                            name: repo.name,
+                            org: (_a = repo.owner) === null || _a === void 0 ? void 0 : _a.login,
+                            selected: true
+                        });
+                    });
                     repositories.push(...newRepos);
                     totalRepos += newRepos.length;
                     remainingRequests--;
+                    retryCount = 0; // Reset retry count on successful request
                     if (remainingRequests === 0) {
                         const elapsedTime = Date.now() - startTime;
                         const delay = Math.ceil(1000 / maxRequestsPerSecond) - elapsedTime;
@@ -4344,6 +4323,22 @@ function getAllRepositoriesWithThrottle(org, maxRequestsPerMinute) {
                             yield new Promise(resolve => setTimeout(resolve, 60000)); // Wait 1 minute
                             continue;
                         }
+                        else if (error.message.includes('timeout') || error.message.includes('connect')) {
+                            retryCount++;
+                            if (retryCount <= maxRetries) {
+                                console.log(`Connection timeout, retrying (${retryCount}/${maxRetries})...`);
+                                yield new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
+                                continue;
+                            }
+                            else {
+                                console.error('Max retries reached. Please check your network connection and try again.');
+                                throw error;
+                            }
+                        }
+                        else if (error.message.includes('Bad credentials')) {
+                            console.error('Error: Invalid GitHub token. Please verify your token is correct and has the necessary permissions.');
+                            process.exit(1);
+                        }
                     }
                     else {
                         console.error('Unknown error type:', error);
@@ -4360,7 +4355,7 @@ function getAllRepositoriesWithThrottle(org, maxRequestsPerMinute) {
             throw error;
         }
         if (totalRepos === 0) {
-            console.log('No repositories found for the organization. Please verify the organization name and your access permissions.');
+            console.log('No repositories found. Please verify your token has the necessary permissions.');
         }
         return repositories;
     });
@@ -4368,7 +4363,7 @@ function getAllRepositoriesWithThrottle(org, maxRequestsPerMinute) {
 // Function to find all contributing users for a repository within the last 90 days
 function getContributors(owner, repo) {
     return __awaiter(this, void 0, void 0, function* () {
-        console.log('-Fetching commits for ' + repo);
+        console.log(`-Fetching commits for ${owner}/${repo}`);
         // Get the date 90 days ago from now
         const ninetyDaysAgo = new Date();
         ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
@@ -4391,7 +4386,7 @@ function getContributors(owner, repo) {
                 });
             }
             catch (error) {
-                console.log('-Error fetching contributors for ' + repo + ': ' + error);
+                console.log(`-Error fetching contributors for ${owner}/${repo}: ${error}`);
                 break;
             }
             // If the response is empty, break the loop
@@ -4401,10 +4396,10 @@ function getContributors(owner, repo) {
             // Add the contributors from the current page to allContributors
             allContributors = allContributors.concat(response.data);
             // Increment the page number for the next iteration
-            console.log('--Fetchging page ' + page);
+            console.log(`--Fetched page ${page} with ${response.data.length} commits`);
             page++;
             // Delay the next request by 1 second to limit to 60 requests per minute
-            yield new Promise(resolve => setTimeout(resolve, 3000));
+            yield new Promise(resolve => setTimeout(resolve, 1000));
         }
         return allContributors;
     });
@@ -4452,14 +4447,36 @@ function deleteCachedCommitFiles() {
         }
     });
 }
+// Function to write committers per repo to a file
+function writeCommittersPerRepo(committers) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const filePath = 'committers-per-repo.txt';
+        let content = '';
+        for (const [repo, committerSet] of committers) {
+            content += `${repo}\n`;
+            for (const committer of committerSet) {
+                content += `  ${committer}\n`;
+            }
+            content += '\n';
+        }
+        yield fs_1.promises.writeFile(filePath, content);
+        console.log(`Committers per repo saved to ${filePath}`);
+        console.log(`Total repositories with committers: ${committers.size}`);
+        let totalCommitters = 0;
+        for (const committerSet of committers.values()) {
+            totalCommitters += committerSet.size;
+        }
+        console.log(`Total unique committers across all repositories: ${totalCommitters}`);
+    });
+}
 function getAllUsers() {
     return __awaiter(this, void 0, void 0, function* () {
         console.log('Starting contributor analysis...');
-        console.log(`Organization: ${orgName}`);
         console.log(`GitHub Domain: ${domain}`);
         console.log(`Time period: Last 90 days`);
         let repositories = [];
         const regex = yield getRegexPattern();
+        const committersPerRepo = new Map();
         try {
             // Check if repositories.txt exists and force reload is not set
             const repositoriesExist = yield fs_1.promises.access('repositories.txt')
@@ -4471,8 +4488,8 @@ function getAllUsers() {
                 repositories = data.split('\n')
                     .filter(line => line.trim() !== '')
                     .map(line => {
-                    const [name, selected] = line.split(',');
-                    return { name, selected: selected === 'true' };
+                    const [name, org, selected] = line.split(',');
+                    return { name, org, selected: selected === 'true' };
                 });
             }
             else {
@@ -4490,42 +4507,42 @@ function getAllUsers() {
                     }
                 }
                 console.log('Fetching repositories from GitHub...');
-                const repoNames = yield getAllRepositoriesWithThrottle(orgName, maxRequestsPerMinute);
-                repositories = repoNames.map(name => ({ name, selected: true })); // Default to all repositories selected
-            }
-            // Interactive mode for repository selection
-            if (interactive && (!repositoriesExist || forceReload)) {
-                console.log('\nInteractive repository selection mode:');
-                for (const repo of repositories) {
-                    const answer = yield question(`Include repository ${repo.name}? (y/n): `);
-                    repo.selected = answer.toLowerCase() === 'y';
-                }
-            }
-            else if (!repositoriesExist || forceReload) {
-                // Save all repositories as selected by default
+                repositories = yield getAllRepositoriesWithThrottle(maxRequestsPerMinute);
+                // Save repositories to file
                 const repoContent = repositories
-                    .map(repo => `${repo.name},${repo.selected}`)
+                    .map(repo => `${repo.name},${repo.org},${repo.selected}`)
                     .join('\n');
                 yield fs_1.promises.writeFile('repositories.txt', repoContent);
-                console.log('\nRepositories have been fetched and saved to repositories.txt');
-                console.log('To review and modify repository selection:');
-                console.log('1. Open repositories.txt in a text editor');
-                console.log('2. Each line should be in the format: repositoryName,true/false');
-                console.log('   - true means the repository will be processed');
-                console.log('   - false means the repository will be skipped');
-                console.log('3. Change the true/false value for each repository as needed');
-                console.log('4. Save the file and run the script again without --force-reload');
-                console.log('\nTo process all repositories, run the script again without any changes');
-                console.log('To process only specific repositories, modify the true/false values and run again');
-                console.log('\nTo fetch repositories again, use --force-reload');
-                console.log('To use interactive selection, use --interactive');
-                return;
+                // Interactive mode for repository selection
+                if (interactive) {
+                    console.log('\nInteractive repository selection mode:');
+                    for (const repo of repositories) {
+                        const answer = yield question(`Include repository ${repo.name}? (y/n): `);
+                        repo.selected = answer.toLowerCase() === 'y';
+                    }
+                }
+                else {
+                    // Save all repositories as selected by default
+                    console.log('\nRepositories have been fetched and saved to repositories.txt');
+                    console.log('To review and modify repository selection:');
+                    console.log('1. Open repositories.txt in a text editor');
+                    console.log('2. Each line should be in the format: repositoryName,organization,true/false');
+                    console.log('   - true means the repository will be processed');
+                    console.log('   - false means the repository will be skipped');
+                    console.log('3. Change the true/false value for each repository as needed');
+                    console.log('4. Save the file and run the script again without --force-reload');
+                    console.log('\nTo process all repositories, run the script again without any changes');
+                    console.log('To process only specific repositories, modify the true/false values and run again');
+                    console.log('\nTo fetch repositories again, use --force-reload');
+                    console.log('To use interactive selection, use --interactive');
+                    return;
+                }
+                // Save repository selection
+                const updatedRepoContent = repositories
+                    .map(repo => `${repo.name},${repo.org},${repo.selected}`)
+                    .join('\n');
+                yield fs_1.promises.writeFile('repositories.txt', updatedRepoContent);
             }
-            // Save repository selection
-            const repoContent = repositories
-                .map(repo => `${repo.name},${repo.selected}`)
-                .join('\n');
-            yield fs_1.promises.writeFile('repositories.txt', repoContent);
             // Filter repositories based on selection
             const selectedRepositories = repositories.filter(repo => repo.selected);
             console.log(`\nProcessing ${selectedRepositories.length} selected repositories`);
@@ -4545,16 +4562,61 @@ function getAllUsers() {
                 const contributorFileExists = yield fs_1.promises.access(contributorFilePath)
                     .then(() => true)
                     .catch(() => false);
-                // Always recreate commit files if force reload is set
                 if (forceReload || !contributorFileExists) {
                     console.log(`Fetching commits for ${repo.name}...`);
-                    const contributors = yield getContributors(orgName, repo.name);
-                    yield writeContributorsToCSV(repo.name, contributors);
+                    if (!repo.org) {
+                        console.log(`Warning: No organization found for repository ${repo.name}, skipping...`);
+                        continue;
+                    }
+                    const contributors = yield getContributors(repo.org, repo.name);
+                    if (contributors.length > 0) {
+                        yield writeContributorsToCSV(repo.name, contributors);
+                        console.log(`Found ${contributors.length} commits for ${repo.name}`);
+                        // Only read the file if we found commits and wrote them
+                        const repoCommitters = new Set();
+                        try {
+                            const contributorFileContent = yield fs_1.promises.readFile(contributorFilePath, 'utf8');
+                            const contributors = JSON.parse(contributorFileContent);
+                            for (const contributor of contributors) {
+                                const email = contributor.commit.author.email.toLowerCase();
+                                repoCommitters.add(email);
+                            }
+                            console.log(`Found ${repoCommitters.size} unique committers for ${repo.name}`);
+                            // Get the full repo name with org if available
+                            const fullRepoName = repo.org ? `${repo.org}/${repo.name}` : repo.name;
+                            committersPerRepo.set(fullRepoName, repoCommitters);
+                        }
+                        catch (error) {
+                            console.error(`Error reading contributors for ${repo.name}:`, error);
+                        }
+                    }
+                    else {
+                        console.log(`No commits found for ${repo.name} in the last 90 days`);
+                    }
                 }
                 else {
                     console.log(`Using cached commits for ${repo.name}`);
+                    // Read from existing file
+                    const repoCommitters = new Set();
+                    try {
+                        const contributorFileContent = yield fs_1.promises.readFile(contributorFilePath, 'utf8');
+                        const contributors = JSON.parse(contributorFileContent);
+                        for (const contributor of contributors) {
+                            const email = contributor.commit.author.email.toLowerCase();
+                            repoCommitters.add(email);
+                        }
+                        console.log(`Found ${repoCommitters.size} unique committers for ${repo.name}`);
+                        // Get the full repo name with org if available
+                        const fullRepoName = repo.org ? `${repo.org}/${repo.name}` : repo.name;
+                        committersPerRepo.set(fullRepoName, repoCommitters);
+                    }
+                    catch (error) {
+                        console.error(`Error reading contributors for ${repo.name}:`, error);
+                    }
                 }
             }
+            // Write committers per repo to file
+            yield writeCommittersPerRepo(committersPerRepo);
             // Consolidate unique contributors
             console.log('\nConsolidating unique contributors...');
             const uniqueContributors = new Set();
